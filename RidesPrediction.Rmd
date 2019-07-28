@@ -1,0 +1,696 @@
+---
+title: "Data Scientist Challenge"
+author: "Bryan Clark"
+date: "7/25/2019"
+output: 
+  html_document:
+    highlight: default
+    theme: cosmo
+    toc: true
+    toc_float: true
+    df_print: tibble
+---
+
+```{r setup, include = FALSE}
+# customize output options 
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 6, fig.asp = 0.618, out.width = "70%", 
+                      fig.align = "center")
+
+# rmarkdown
+library(knitr)
+library(kableExtra)
+
+# helpers
+library(tidyverse)
+library(skimr)
+library(lubridate)
+library(glue)
+
+# pre-processing
+library(rsample)
+
+# modeling
+library(h2o)
+
+# evaluation
+library(broom)
+library(yardstick)
+
+# set theme for plots
+theme_set(theme_minimal(base_family = "Avenir"))
+
+# The palette with grey:
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73",
+               "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+## Excecutive Summary
+
+With the goal of predicting how many users on a particular day are using Citi Bike, we explored how characteristics in the time of year and weather help predict the number of riders on a given day. Ridership shows to be driven primarily by the month of the year and temperature, with ridership peaking in the summer months and reaching lows in the winter months. Precipitation and snow also drive down the number of riders on a day. 
+
+Through the use of statistical and machine learning predictive modeling, we are able to capture about 85% of the signal in the data and improve prediction accuracy by 64% over baseline. 
+
+Given additional need, there are opportunities to further improve the prediction accuracy through continuous improvement and additional data source. 
+
+## 1. Purpose
+
+### 1.1 Goal
+
+**"Predict how many users on any particular day are using Citi Bike."**
+
+Our goal will be to predict the number of users on a given day. In practice, we would want to develop a better understanding of the purpose of the model to verify if further refinement is needed. 
+
+### 1.2 Follow-Up Questions
+
+Some questions that come to mind for betting framing the analysis:
+
++ How is the stakeholder intending to use the predictions?
++ Are we currently predicting users? If so, what is that process and its performance (if currently measured)?
++ Who will be affected by a change in the current process? How does their processes change?
++ Is this a one-time task or on-going? If on-going, how often are predictions needed? 
+
+### 1.3 Assumptions
+
+Our assumptions will be that a forecast is needed that'll be used to inform some sort of planning and that the stakeholders want a better understanding of the variation in demand. 
+
+### 1.4 Success KPI
+
+To produce an accurate model, we will evaluate using RMSE (root-mean-squared error). It is the square root of the averaged squared error. This gives us the typical size of the error in the same scale of units as our target (# of rides).
+
+## 2. Data
+
+### 2.1 Source Data
+
+The data used for this analysis comes from three different sources:
+
+1. Citi Bike System Data
+2. NOAA National Centers for Environmental Information - NYC Weather Data
+3. holidays python package - US Holiday Data
+
+More information about the process for data collection and transformation can be found in `download_bike_data.ipynb` and `make_dataset.ipynb`. A full data profile can also be found in `BikeSummary.html`. 
+
+We are unable to identify unique users in the dataset, so we are making the assumption that each user only has one ride per day. This is likely incorrect, but the estimate could be adjusted based on assumptions of how many rides the average user has per day. 
+
+The benefit of this approach is the analysis can be reproduced with a new target variable if more identifiable ridership data becomes available. 
+
+#### 2.1.1 Citi Bike System Data
+
+Per the [website](https://www.citibikenyc.com/system-data):
+
+>**Citi Bike Trip Histories**
+
+>We publish downloadable files of Citi Bike trip data. The data includes:
+
+>+ Trip Duration (seconds)
++ Start Time and Date
++ Stop Time and Date
++ Start Station Name
++ End Station Name
++ Station ID
++ Station Lat/Long
++ Bike ID
++ User Type (Customer = 24-hour pass or 3-day pass user; Subscriber = Annual Member)
++ Gender (Zero=unknown; 1=male; 2=female)
++ Year of Birth
+
+>This data has been processed to remove trips that are taken by staff as they service and inspect the system, trips that are taken to/from any of our “test” stations (which we were using more in June and July 2013), and any trips that were below 60 seconds in length (potentially false starts or users trying to re-dock a bike to ensure it's secure).
+
+#### 2.1.2 NYC Weather Data
+
+This [data](https://www.ncdc.noaa.gov/cdo-web/datasets/GHCND/locations/ZIP:10023/detail) comes from a weather station from Central Park in NYC. 
+
+Full [documentation](https://www1.ncdc.noaa.gov/pub/data/cdo/documentation/GHCND_documentation.pdf) is available, but our variable of interest are listed below: 
+
+>The five core values are:
+
+>+ PRCP = Precipitation (mm or inches as per user preference, inches to hundredths on Daily Form pdf file)
++ SNOW = Snowfall (mm or inches as per user preference, inches to tenths on Daily Form pdf file)
++ SNWD = Snow depth (mm or inches as per user preference, inches on Daily Form pdf file)
++ TMAX = Maximum temperature (Fahrenheit or Celsius as per user preference, Fahrenheit to tenths on
+Daily Form pdf file
+
+#### 2.1.3 US Holidays
+
+Per the [documentation](https://pypi.org/project/holidays/0.1/):
+
+>Holidays is a fast, efficient Python library for generating country-specific sets of holidays on the fly. It aims to make determining whether a specific date is a holiday as fast and flexible as possible.
+
+In our case, a flag (`TRUE`/`FALSE`) was created to note if the date is a US Holiday. 
+
+### 2.2 Read Data
+
+```{r}
+bikes_raw_tbl <- read_csv("data/daily.csv")
+```
+
+## 3. Exploratory Data Analysis
+
+### 3.1 Data Skim
+
+```{r}
+bikes_raw_tbl %>% skim()
+```
+
+We confirm that we do not have any missing values. Additionally, none of the variables look like they are out of range. 
+
+### 3.3 Data Understanding
+
+Per `BikeSummary.html`, we see that there is a strong correlation between each of the temperature variables. We will then just pick one to include in the model. 
+
+The number of rides also appears to be positively correlated to the temperature and negatively correlation to precipitation and snow. 
+
+### 3.2 Daily Counts
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(date, rides)) +
+  geom_line()
+```
+
+There appears to be strong seasonality present in the trended daily counts. Ridership looks to increase in the summer months and decrease in the winter months. The temperature variable is likely capturing some of this signal. 
+
+There also appears to be a slight increase in the pattern year-over-year. We can include a *days since <DATE>* variable to help account for the growth over time. The downside of this assumption is that this model may perform worse over time if this growth pattern changes.  
+
+### 3.3 Date Processing
+
+```{r}
+bikes_raw_tbl <- bikes_raw_tbl %>%
+  # create date variables
+  mutate(
+    year        = lubridate::year(date),
+    month       = lubridate::month(date, label = TRUE),
+    day_of_week = lubridate::wday(date, label = TRUE)
+  ) %>%
+  mutate(
+    # remove factor ordering 
+    year        = factor(year),
+    month       = factor(month, ordered = F),
+    day_of_week = factor(day_of_week, ordered = F),
+    # change variable type
+    holiday     = as.logical(holiday)
+  )
+```
+
+### 3.4 Data Visualization
+
+**Daily Rides**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(rides)) +
+  geom_histogram(binwidth = 5000, color = "white") +
+  labs(
+    title = "Citi Bike Daily Ridership Distribution",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "Daily Rides",
+    y = "Count"
+  )
+```
+
+We can see what looks to be two distributions present in the data. This could be a bit of a summer/winter effect we see with months and temperature. 
+
+**Daily Ridership by Month & Year**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(month, rides, fill = year)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cbPalette) +
+  labs(
+    title = "Citi Bike Daily Ridership by Month",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "",
+    y = "Rides"
+  )
+```
+
+We see both the seasonal effect with rides increasing in the warmer months and some growth across each year. The growth appears strongest in 2019. 
+
+**Daily Ridership by Day-of-Week & Year**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(day_of_week, rides, fill = year)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cbPalette) +
+  labs(
+    title = "Citi Bike Daily Ridership by Day of Week",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "",
+    y = "Rides"
+  )
+```
+
+Going from Sunday to Saturday, there is a subtle increase in ridership during the middle of the work-week with a subtle descrease back into Friday/Saturday. 
+
+**Precipitation vs. Riders**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(prcp, rides)) +
+  geom_point() +
+  labs(
+    title = "Citi Bike Daily Ridership vs. Precipitation",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "Precipitation (in.)",
+    y = "Rides"
+  )
+```
+
+There looks to be a decrease in riders as precipitation increases. 
+
+**Snowfall vs. Riders**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(snow, rides)) +
+  geom_point() +
+  labs(
+    title = "Citi Bike Daily Ridership vs. Snowfall",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "Snowfall (in.)",
+    y = "Rides"
+  )
+```
+
+As we saw with the correlation heatmaps in `BikeSummary.html`, there appears to be a negative decrease in riders as snowfall increases. 
+
+**Snow Depth vs. Riders**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(snwd, rides)) +
+  geom_point() +
+  labs(
+    title = "Citi Bike Daily Ridership vs. Snow Depth",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "Snow Depth (in.)",
+    y = "Rides"
+  )
+```
+
+Similarly with snowfall, we see a decrease in riders as the snow depth increases. 
+
+**Temperature vs. Riders**
+
+```{r}
+bikes_raw_tbl %>%
+  ggplot(aes(tmax, rides)) +
+  geom_point() + 
+  labs(
+    title = "Citi Bike Daily Ridership vs. Temperature",
+    caption = "Source: Citi Bike System Data: 2017-2019",
+    x = "Maximum Daily Temperature (Fahrenheit)",
+    y = "Rides"
+  )
+```
+
+Temperature appears to have the strongest linear relationship with riders. This makes sense as more people are probably willing to or want to bike when the weather is nicer. 
+
+## 4. Pre-Processing
+
+For our modeling task, we will create any new variables to include in our model and select features to test our model. 
+
+### 4.1 Feature Engineering & Variable Selection
+
+For now, we will just create a variable to capture any signal from the growth over time. This will be the number of days away from the first date in the dataset (`2017-01-01`).
+
+The variables we select will be the newly created growth signal as well as month, day of week, holiday flag, precipitation, snowfall, snow depth, and temperature. These should help capture most of the seasonal variation we saw. 
+
+The date variable is retained to allow for further evaluation of errors based on the date of the observation. 
+
+```{r}
+bikes_clean_tbl <- bikes_raw_tbl %>%
+  mutate(
+    days_since_jan0117 = as.integer(date - min(date))
+  ) %>%
+  select(
+    date, days_since_jan0117, 
+    month, day_of_week, holiday,
+    prcp:snwd, tmax, rides
+  )
+
+bikes_clean_tbl %>% glimpse()
+```
+
+### 4.2 Data Partitioning
+
+We will use 85% of the data to train our models and 15% for evaluation. The files are also saved to iterate on the modeling process as necessary. 
+
+#### 4.2.1 Train/Test Split
+
+```{r}
+# set seed for reproducibility
+set.seed(110)
+
+# split object
+bike_split <- initial_split(bikes_clean_tbl, prop = .85)
+
+# create train & test data
+train_tbl <- training(bike_split)
+test_tbl  <- testing(bike_split)
+```
+
+#### 4.2.2 Save Data
+
+```{r}
+#write_csv(train_tbl, "data/train.csv")
+#write_csv(test_tbl, "data/test.csv")
+```
+
+## 5. Modeling
+
+For our prediction task, we are going to evaluate two regression algorithms. We will start with a linear regression to maximize simplicity and interpretability. As a follow-up, we will test a random forest algorithm to see what patterns a more complex algorithm reveals. 
+
+### 5.0 Baseline
+
+Each of these approaches will be compared to a baseline approach. The baseline approach used will be the average of the training data. This assumes the best guess to minimalize the error is the average of training data. 
+
+If we get more information from the stakeholders about any current process performance, we can swap this out for a more accurate baseline comparision. 
+
+#### 5.0.1 Baseline Predictions
+
+```{r}
+# average number of rides as baseline prediction
+base_prediction <- mean(train_tbl$rides)
+
+# train predictions
+base_train_pred_tbl <- as.tibble(rep(base_prediction, nrow(train_tbl))) %>%
+  bind_cols(train_tbl %>% select(date, rides)) %>%
+  mutate(data = "train", model = "average guess")
+
+# test predictions
+base_test_pred_tbl <- as.tibble(rep(base_prediction, nrow(test_tbl))) %>%
+  bind_cols(test_tbl %>% select(date, rides)) %>%
+  mutate(data = "test", model = "average guess")
+
+# predictions combined
+baseline_prediction_tbl <- bind_rows(base_train_pred_tbl, base_test_pred_tbl) %>%
+  rename(prediction = value)
+```
+
+```{r}
+ base_train_pred_tbl %>%
+  yardstick::rmse(rides, value)
+```
+
+The RMSE performance on our baseline model is very poor on the training data at 19,000 riders. 
+
+### 5.1 Linear Regression
+
+We will start with fitting a linear regression model to our data and estimate the linear relationships to riders. 
+
+The benefits of this approach are simplicity and interpretability. The downside is that we are only capture linear effects. Additionally, this model does not account for the number of riders to be bounded above 0. 
+
+#### 5.1.1 Model Fit
+
+```{r}
+# fit main effects OLS model
+linear_model <- lm(rides ~ ., data = train_tbl %>% select(-date))
+```
+
+#### 5.1.2 Model Summary
+
+```{r}
+summary(linear_model)
+```
+
+We see our model captures about 86% of the variance in the data. There are several significant variables present. 
+
+We see there is about a 16/riders per day growth from 2017 through 2019. The winter months do not appear to be statistically different from one another. There appear to be peaks in June, September, and October. One option to simiplify the model would be to condense months into season variables. 
+
+There are significant differences for day of week as well. Tuesday through Thursday seem similar in that these could be grouped as well. 
+
+There is a strong decrease in riders on holidays. Perhaps more people are out-of-town. Precipiation and snow effects are present. However, temperature has a strong additive effect. 
+
+This verifies what we saw in the visualizations. 
+
+```{r}
+ broom::augment(linear_model) %>%
+  yardstick::rmse(rides, .fitted)
+```
+
+The RMSE of 7,000 riders on our training data is already a large improvement over the baseline. This is an optimistic measure through as this performance is across only the data used to fit the model. 
+
+#### 5.1.3 Multicollinearity Check
+
+To help ensure the fit of our model, we'll want to check for the presence of multi-collinearity. This would indicate that we have redundant predictor variables (e.g. snowfall and snow depth). 
+
+Per this [source](http://www.sthda.com/english/articles/39-regression-model-diagnostics/160-multicollinearity-essentials-and-vif-in-r/), a value above of 5 or 10 would create cause for concern. 
+
+```{r}
+car::vif(linear_model)
+```
+
+We see there is potential information redundancy between temperature and month. It isn't above our threshold, so we will proceed as is, but perhaps condensing into a season variable would help here as well. 
+
+#### 5.1.4 Predictions
+
+```{r}
+# train data predictions
+train_preds <- predict(linear_model, newdata = train_tbl) %>%
+  as.tibble()
+
+train_pred_tbl <- bind_cols(train_preds, train_tbl %>% select(date, rides)) %>%
+  mutate(data = "train", model = "linear")
+
+# test data predictions
+test_preds <- predict(linear_model, newdata = test_tbl) %>%
+  as.tibble()
+
+test_pred_tbl <- bind_cols(test_preds, test_tbl %>% select(date, rides)) %>%
+  mutate(data = "test", model = "linear")
+
+# combined predictions
+prediction_tbl <- bind_rows(train_pred_tbl, test_pred_tbl) %>%
+  rename(prediction = value)
+```
+
+#### 5.1.5 Save Model
+
+```{r}
+# save trained model
+#saveRDS(linear_model, "models/lm_20190627/linear_regression_20190727.rds")
+```
+
+### 5.2 Random Forest
+
+The next algorithm we will evaluate is a random forest. Random forests use a large collection of de-correlated decision trees by building trees on random subsets of the data and using random features to choose for spliting. These decision trees look for the best places to split data to maximize predictive power. These seperate trees then come together to "vote" on the what the prediction should be based on their individual predicitions. 
+
+The benefit is these models can find more complex relationships and can perform well with minimal pre-processing. The trade-off is that interpretation can be more difficult. 
+
+#### 5.3.1 Model Fit
+
+While there are several hyperparameters we could tune, we will focus on a basic model using 1000 trees per the recommendation in [Applied Predictive Modeling, page 200](http://appliedpredictivemodeling.com/). 
+
+We will evaluate performance using 5-fold cross-validation. 
+
+```{r}
+# initialize h2o cluster
+h2o.no_progress()
+h2o.init()
+
+# convert training data to h2o object
+train_h2o <- as.h2o(train_tbl %>% select(-date))
+
+# set the response column to rides
+response <- "rides"
+
+# set the predictor names
+predictors <- setdiff(colnames(train_tbl %>% select(-date)), response)
+```
+
+```{r}
+# fit random forest model with 1000 trees
+h2o_rf <- h2o.randomForest(
+    x = predictors, 
+    y = response,
+    training_frame = train_h2o, 
+    ntrees = 1000,
+    nfolds = 5,
+    seed = 110
+)
+```
+
+#### 5.3.2 Model Summary
+
+```{r}
+h2o_rf
+```
+
+The output shows the full set of default parameters used with 1000 trees. We see a slight inprovement of the RMSE of the cross-validation holdout data. This uses the average of the 5 folds, so we can be optimistic about the improvement. 
+
+#### 5.3.3 Variable Importance
+
+To help understand our random forest model, we can look at the variable importance. Per the [H2O Documentation](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/variable-importance.html):
+
+>Variable importance is determined by calculating the relative influence of each variable: whether that variable was selected to split on during the tree building process, and how much the squared error (over all trees) improved (decreased) as a result.
+
+```{r}
+rf_varimp_tbl <- h2o.varimp(h2o_rf) %>% as.tibble()
+```
+
+```{r}
+rf_varimp_tbl %>%
+  ggplot(aes(fct_reorder(variable, percentage), percentage)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Random Forest Variable Importance",
+    x = "",
+    y = "Relative Predictive Importance",
+    source = "H2O Random Forest - 1000 Trees"
+  )
+```
+
+We see most of the importance is captured in the temperature, month, and days since January 1st 2017 variables. Precipitation also shows as an influential variable, so we would want to ensure we are able to collect weather forecasts regularly if this model is to be used in practice. 
+
+#### 5.3.4 Predictions
+
+```{r}
+# training predictions
+h2o_train_preds <- h2o.predict(h2o_rf, newdata = as.h2o(train_tbl)) %>% as.tibble()
+
+h2o_train_pred_tbl <- bind_cols(h2o_train_preds, train_tbl %>% select(date, rides)) %>%
+  mutate(data = "train", model = "random forest")
+
+# test predictions
+h2o_test_preds <- h2o.predict(h2o_rf, newdata = as.h2o(test_tbl)) %>% as.tibble()
+
+h2o_test_pred_tbl <- bind_cols(h2o_test_preds, test_tbl %>% select(date, rides)) %>%
+  mutate(data = "test", model = "random forest")
+
+# combined predictions
+h2o_prediction_tbl <- bind_rows(h2o_train_pred_tbl, h2o_test_pred_tbl) %>%
+  rename(prediction = predict)
+```
+
+#### 5.3.5 Save Model
+
+```{r}
+# h2o.saveModel(h2o_rf, "models/h2o_rf_20190727",)
+```
+
+## 6. Evalution
+
+We will now evaluate performance on each of our algorithms on the test data set. Since this data was not used to train the models, this should give us a more unbiased assessment of performance. 
+
+### 6.0 Baseline Performance
+
+#### 6.0.1 RMSE
+
+```{r}
+# function to group by train/test datasets and calculate RMSE of each
+calculate_rmse <- function(prediction_tbl) {
+  
+  prediction_tbl %>%
+    group_by(data) %>%
+    yardstick::rmse(rides, prediction)
+  
+}
+
+calculate_rmse(baseline_prediction_tbl)
+```
+
+As expected, our baseline data doesn't perform very well on either the training or test data. 
+
+### 6.1 Linear Regression Performance
+
+#### 6.1.1 RMSE
+
+```{r}
+calculate_rmse(prediction_tbl)
+```
+
+The performance of the test set is inline with the training set. We see an RMSE about 7,000 riders on this very simple model. 
+
+#### 6.1.2 Predicted vs. Actuals
+
+```{r}
+# function to replicate plots
+plot_predicted_vs_actual <- function(prediction_tbl, 
+                                     model_name, 
+                                     source_name) {
+  
+  p <- prediction_tbl %>%
+    ggplot(aes(prediction, rides, color = data)) +
+    geom_point(size = 3, alpha = 1/2) +
+    geom_abline(linetype = "dashed") +
+    xlim(0,90000) + 
+    ylim(0,90000) +
+    scale_color_manual(values = c(cbPalette[7], cbPalette[1])) +
+    labs(
+      title = glue("{model_name} Predictions"),
+      caption = glue("Source: {source_name}"),
+      x = "Predicted Riders",
+      y = "Actual Riders"
+    )
+  
+  return(p)
+}
+
+prediction_tbl %>%
+  plot_predicted_vs_actual("Linear Regression", "Base R - main effects")
+```
+
+Our residuals appear to be somewhat normally distributed. We could look at the dates with the largest error in the training set to get a better idea of specfic days it performs worse. 
+
+### 6.2 Random Forest Performance
+
+#### 6.2.1 RMSE
+
+```{r}
+calculate_rmse(h2o_prediction_tbl)
+```
+
+We see our random forest model performed really well on the training data and not as well as the test data. This is not unexpected as a more complex model presents an opportunity to overfit the data. Collecting more data could help with this. 
+
+Either way, the random forest shows better predictive performance than our linear regression by about 600 riders. Depending on the use, the added performance may not be worth increased complexity. 
+
+#### 6.2.2 Predicted vs. Actuals
+
+```{r}
+h2o_prediction_tbl %>%
+  plot_predicted_vs_actual("Random Forest", "H2O - 1000 trees")
+```
+
+Our model appears to have trouble with the ends of the ranges. It over predicts the lower rider days and over predicts the days with the most demand. To improve this model, we'd want to look for any patterns of this data in our training set. 
+
+## 7. Conclusion
+
+We see that there is an opportunity to predict the number of users on a given day with reasonable performance (RMSE of ~ 6300 to 7000 riders). Exploring the data shows that month, day of the week, and weather have a strong relationship with the number of riders on a given day. 
+
+Over time, there has been about a 16 bikes per day growth of ridership, with peaks occuring in the summer months as the temperature increases. Precipiation and snow activity decrease demand. This makes sense as people may be less inclined to bike outside if it is wet. Additionally, rider demand is lower on holidays and higher during the middle of the week. 
+
+These patterns were confirmed using ordinary least squares and random forest algorithms. The added benefit of this duel approach is that these algorithms use different methods for learning relationships in data, and we saw similar signals from our visualizations and both algorithms. 
+
+### 7.1 Process Improvements
+
+There are a few immediate opportunities for improvement. 
+
+#### 7.1.1 Model Interation
+
+First, we could optimize the hyperameters of our random forest model to optimize for RMSE by testing models over a parameter grid. For our linear model, we could test interactions. 
+
+Additionally, we could try additional learning algorithms such as a single decision tree, nearest neighbor, or support vector machines. 
+
+#### 7.1.2 Feature Engineering
+
+Another option for improvement would be to collect more years of data. We used only 2017 to 2019 YTD. More years of data could help detecting stronger signals. This could be particularly helpful to our random forest algorithm. 
+
+#### 7.1.3 Data Enrichment
+
+We could also collect different data to help find the patterns. The added benefit of our approach is that we could quantify the value any additional data has based on its improvement to the RMSE score. 
+
+### 7.2 Alternative Approaches
+
+#### 7.2.1 Time-Series Algorithms
+
+The data shows clear seaonality due to some combination of temperature and time of the year. Another approach for this could be a time-series model using an approach like Facebook's [Prophet](https://github.com/facebook/prophet) could be particularly useful in this case:
+
+>Prophet is a procedure for forecasting time series data based on an additive model where non-linear trends are fit with yearly, weekly, and daily seasonality, plus holiday effects. It works best with time series that have strong seasonal effects and several seasons of historical data. Prophet is robust to missing data and shifts in the trend, and typically handles outliers well.
+
+#### 7.2.2 Extreme Simplicity
+
+Depending on the data-collection process, some combination of the riders from previous day and the same day on the previous week could also provide a simpler prediction with reasonable strength. 
