@@ -1560,8 +1560,8 @@ div.tocify {
 </div>
 
 
-<div id="excecutive-summary" class="section level2">
-<h2>Excecutive Summary</h2>
+<div id="executive-summary" class="section level2">
+<h2>Executive Summary</h2>
 <p>With the goal of predicting how many users on a particular day are using Citi Bike, we explored how characteristics in the time of year and weather help predict the number of riders on a given day. Ridership shows to be driven primarily by the month of the year and temperature, with ridership peaking in the summer months and reaching lows in the winter months. Precipitation and snow also drive down the number of riders on a day.</p>
 <p>Through the use of statistical and machine learning predictive modeling, we are able to capture about 85% of the signal in the data and improve prediction accuracy by 64% over baseline.</p>
 <p>Given additional need, there are opportunities to further improve the prediction accuracy through continuous improvement and additional data source.</p>
@@ -2031,17 +2031,25 @@ prediction_tbl &lt;- bind_rows(train_pred_tbl, test_pred_tbl) %&gt;%
 <pre class="r"><code># initialize h2o cluster
 h2o.no_progress()
 h2o.init()</code></pre>
-<pre><code>##  Connection successful!
+<pre><code>## 
+## H2O is not running yet, starting it now...
+## 
+## Note:  In case of errors look at the following log files:
+##     /var/folders/9j/ffds5j5x4xn2n7mr2zbslty80000gn/T//RtmpWDOv72/h2o_BryanClark_started_from_r.out
+##     /var/folders/9j/ffds5j5x4xn2n7mr2zbslty80000gn/T//RtmpWDOv72/h2o_BryanClark_started_from_r.err
+## 
+## 
+## Starting H2O JVM and connecting: .. Connection successful!
 ## 
 ## R is connected to the H2O cluster: 
-##     H2O cluster uptime:         19 hours 6 minutes 
+##     H2O cluster uptime:         2 seconds 412 milliseconds 
 ##     H2O cluster timezone:       America/New_York 
 ##     H2O data parsing timezone:  UTC 
 ##     H2O cluster version:        3.20.0.8 
 ##     H2O cluster version age:    10 months and 6 days !!! 
-##     H2O cluster name:           H2O_started_from_R_BryanClark_iol266 
+##     H2O cluster name:           H2O_started_from_R_BryanClark_mib317 
 ##     H2O cluster total nodes:    1 
-##     H2O cluster total memory:   1.57 GB 
+##     H2O cluster total memory:   4.00 GB 
 ##     H2O cluster total cores:    8 
 ##     H2O cluster allowed cores:  8 
 ##     H2O cluster healthy:        TRUE 
@@ -2076,10 +2084,10 @@ h2o_rf &lt;- h2o.randomForest(
 ## ==============
 ## 
 ## H2ORegressionModel: drf
-## Model ID:  DRF_model_R_1564204375217_17 
+## Model ID:  DRF_model_R_1564278383108_1 
 ## Model Summary: 
 ##   number_of_trees number_of_internal_trees model_size_in_bytes min_depth
-## 1            1000                     1000             4215573        10
+## 1            1000                     1000             4215581        10
 ##   max_depth mean_depth min_leaves max_leaves mean_leaves
 ## 1        20   18.88700         34        456   330.09800
 ## 

@@ -3,7 +3,7 @@
 
 # Citi Bike User Prediction
 
-## Excecutive Summary
+## Executive Summary
 
 With the goal of predicting how many users on a particular day are using
 Citi Bike, we explored how characteristics in the time of year and

@@ -45,7 +45,7 @@ cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73",
                "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
 ```
 
-## Excecutive Summary
+## Executive Summary
 
 With the goal of predicting how many users on a particular day are using Citi Bike, we explored how characteristics in the time of year and weather help predict the number of riders on a given day. Ridership shows to be driven primarily by the month of the year and temperature, with ridership peaking in the summer months and reaching lows in the winter months. Precipitation and snow also drive down the number of riders on a day. 
 
